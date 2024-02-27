@@ -25,12 +25,28 @@ elif sys.implementation.name == 'circuitpython':
 
 comm_dict = {
     "establish_connection" : "~ES",
-    "dispense_candy"       : "~ID"
+    "dispense_candy"       : "~ID",
+    "reset_dispenser"      : "~QD",
+}
+
+evnt_dict = {
+    "jam_or_empty"    : "%JP",
+    "candy_taken"     : "%IR",
+    "candy_dispensed" : "%MC"
 }
 
 ack_dict = {
-    "connection_established" : "@es",
-    "candy_dispensed"        : "@id"
+    # Command Acks
+    "~ES" : "@es", # Establish conenction ack
+    "~ID" : "@iD", # Dispense candy ack
+    "~QD" : "@qD", # Reset dispenser ack
+    
+    # Event Acks
+    "%JP"   : "@jp", # Jam ack
+    "%IR"   : "@ir", # Candy taken ack
+    "%MC"   : "@mc"  # Candy dispensed ack
+
+
 }
 
 #------------------------------------------------------------------------#
@@ -76,7 +92,14 @@ class ClientComms: # Class used by client devices to communicate with usb_cdcor 
     def __init__(self, buffer_size=64):
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
-            
+        self.client_flags = {
+        "@jp": 0, # Jam flag
+        "@ir": 0, # Candy flag
+        "@mc": 0, # Candy flag
+        #"report_battery_flag": 0
+        }
+
+
     def enqueue_message(self, message): # Used to put a message in the buffer but not send it
         message1 = message
         self.OutgoingBuffer.enqueue(message1)
@@ -99,24 +122,35 @@ class ClientComms: # Class used by client devices to communicate with usb_cdcor 
     def comm_handler(self):
         if self.OutgoingBuffer.peek():
             self.transmit_message()
-        elif usb_cdc.data.in_waiting > 0: #we can change this to 3 since we know we need 3 bytes
-            self.recieve_message()
+
+        while usb_cdc.data.in_waiting >= 3:
+            self.receive_message()  # Assuming this method updates an internal queue or similar
+            incoming_message = self.dequeue_message()
+
+            # Assuming comm_dict's structure is {command: response} and incoming_message is a command
+            if incoming_message in comm_dict:
+                response = ack_dict.get(comm_dict[incoming_message], "Default Ack") # Change this to the error handling command 
+                self.enqueue_message(response)
+                self.transmit_message()
+                print("doing command")
+            else:
+                flag_count = self.client_flags.get(incoming_message, 0)
+                if flag_count > 0:
+                    self.client_flags[incoming_message] -= 1
+                else:
+                    print(f"No such flag: {incoming_message}")
+
 
     def establish_connection(self):
         is_connected = False # Flag used to mark if the client is connected or not
         while not is_connected:
             self.comm_handler()
-            if self.dequeue_message() == comm_dict[establish_connection]:
-                self.enqueue_message(ack_dict[connection_established])
+            if self.dequeue_message() == comm_dict["establish_connection"]:
+                self.enqueue_message(ack_dict["connection_established"])
                 self.comm_handler()
                 print("Host Connected")
                 is_connected = True
         
-    def interpret_command(self):
-        command_recived = None
-        while command_recived == None:
-            message = self.recieve_message() # not using commhandler on purpose here
-            if message == 
                 
 #------------------------------------------------------------------------#
 
@@ -126,7 +160,13 @@ class HostComms: # Class used by host devices to communicate over pyserial or bl
         self.OutgoingBuffer = CircBuffer(buffer_size)
         self.com = candyserial.usb_serial()
         self.is_connected = False
-        self.dispense_ack_expected = 0 # Flag raised when a command is sent 
+        self.candy_dispensed = 0
+        self.host_flags = {
+            "@es": 0, # Establish connection flag
+            "@ir": 0, # Candy taken flag
+            "@mc": 0, # Candy dispensed flag
+        }
+
             
     def enqueue_message(self, message): # Used to put a message in the buffer but not send it
         message = message
@@ -152,21 +192,32 @@ class HostComms: # Class used by host devices to communicate over pyserial or bl
     def comm_handler(self):
         if self.OutgoingBuffer.peek():
             self.transmit_message()
-        #elif self.com.check_ser_buffer(): #we can change this to 3 since we know we need 3 bytes
-         #   print('you got mail')
-        self.recieve_message()
+
+        while self.com.check_ser_buffer():
+            self.recieve_message()
+            incoming_message = self.dequeue_message()
+
+            if incoming_message in evnt_dict.values():
+                response = ack_dict.get(evnt_dict[incoming_message], "Default Ack")
+                self.enqueue_message(response)
+                self.transmit_message()
+                print("event recieved")
+            else:
+                flag_count = self.host_flags.get(incoming_message, 0)
+                if flag_count > 0:
+                    self.host_flags[incoming_message] -= 1
+                else:
+                    print(f"No such flag: {incoming_message}")
 
     def establish_connection(self): # Used to establish a connection and await for confirmation
         self.enqueue_message(comm_dict['establish_connection'])
         self.comm_handler()
-        
-        
 
     def dispense_candy(self): 
         if not self.is_connected:
             print("Please establish connections and try again")
             return
 
-        self.enqueue_message(comm_dict[dispense_candy])
+        self.enqueue_message(comm_dict["dispense_candy"])
         self.dispense_ack_expected += 1
        

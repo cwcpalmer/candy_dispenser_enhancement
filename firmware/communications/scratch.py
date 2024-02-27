@@ -72,3 +72,26 @@ trans_constructor = {
                 self.is_connected = True
             time.sleep(1)
         """
+
+        elif usb_cdc.data.in_waiting > 0: #we can change this to 3 since we know we need 3 bytes
+            self.recieve_message()
+            incoming_message = self.dequeue_message()
+
+
+    def comm_handler(self):
+        if self.OutgoingBuffer.peek():
+            self.transmit_message()
+        while usb_cdc.data.in_waiting >= 3: 
+            self.recieve_message()
+            incoming_message = self.dequeue_message()
+            if incoming_message in comm_dict.values():
+                self.enqueue_message(ack_dict[incoming_message]) # Enqueue the appropriate response for the message
+                print("doing command")
+            while self.client_flags[incoming_message] > 0:
+                if incoming_message in self.ack_dict.keys():
+                    self.client_flags[incoming_message] -= 1
+                else:
+                    print(f"No such flag: {incoming_message}")
+
+                if usb_cdc.data.in_waiting >= 3:
+                    incoming_message = self.recieve_message()

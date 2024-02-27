@@ -34,7 +34,7 @@ class usb_serial:
         return None 
 
     def check_ser_buffer(self):
-        if self.ser.in_waiting > 0:
+        if self.ser.in_waiting > 3:
             return True
         else:
             return False

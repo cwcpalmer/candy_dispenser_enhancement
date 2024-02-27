@@ -1,0 +1,11 @@
+{
+    "trans_constructor": {
+        "Com" : "~",
+        "Ack" : "@",
+        "Evt" : "%",
+        "EsCon" : "E",
+        "rt1" : "I",
+        "rtstp" : "D"
+                
+        }
+      }
