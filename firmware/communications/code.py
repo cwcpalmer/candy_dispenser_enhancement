@@ -5,20 +5,12 @@
 # 
 import time
 import candycom #Letuce see what dis biotch can do
+import asyncio
 #import usb_cdc
 candycomms = candycom.ClientComms()
 
-candycomms.establish_connection()
-print('broke out of es loop')
+async def main():
+        await candycomms.comm_handler()
 
 while True:
-    time.sleep(1)
-    candycomms.comm_handler()
-    message_recieved = candycomms.dequeue_message()
-    if message_recieved == '~ID':
-        candycomms.enqueue_message('~id')
-        candycomms.comm_handler()
-
-        print(message_recieved)
-
-
+    asyncio.run(main())

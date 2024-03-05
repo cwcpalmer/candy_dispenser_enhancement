@@ -1,19 +1,14 @@
 import candycom # Import the candycom library
 import time
+import asyncio
 
 #TODO
 # Send an ES command to start communications
 
 candycomms = candycom.HostComms()
 
-#candycomm.ser.write(b"~ES")
-
-
-candycomms.establish_connection()
-print('broke out of es loop')
-
+async def main():
+    await candycomms.comm_handler()
 
 while True:
-    time.sleep(1)
-    candycomms.dispense_candy()
-    candycomms.comm_handler()
+    asyncio.run(main())

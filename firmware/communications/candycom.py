@@ -1,27 +1,22 @@
-# Experimental attempt at creating circuit Python comms for GIRRLS project
-# By Michael Lance & Thomas Baker
-# Created: 02/06/2024
-# Updated: 2/13/2024
-#------------------------------------------------------------------------#
-# TODO:
-# Create BLE library to send messages from buffer
-# Create ability for incoming and outgoing buffers to send data through candy serial
-# Cretae establish connections method to send a ~ES and the corresponding ack ~es -Done
+# Asyncio based rewrite of candycom
+# Written by Michael Lance
+# 3/5/2024
+#------------------------------------------------------#
 
-# Gracefully handle empty buffers
-
-# import libraries used regardless of platform
+# import different libraries depending upon platform
 import asyncio
 import sys
 import time
 
-# import different libraries based on what platform the library is on
 if sys.implementation.name != 'circuitpython':
     import candyserial
     usb_cdc = None # Used to appease the interpreter
 elif sys.implementation.name == 'circuitpython':
     import usb_cdc
     candyserial = None  # Used to appease the interpreter
+
+#------------------------------------------------------#
+# Create dictionaries to store command, event, and acks
 
 comm_dict = {
     "establish_connection" : "~ES",
@@ -50,6 +45,7 @@ ack_dict = {
 }
 
 #------------------------------------------------------------------------#
+# Create Circular Buffers to be used by each roles
 
 class CircBuffer:
     def __init__(self, capacity: int):
@@ -81,143 +77,166 @@ class CircBuffer:
         self.size -= 1
         return item
 
+    def if_data(self) -> bool:
+        return not self.is_empty()
+
     def peek(self):
         if self.is_empty():
-            return False
-        return True
-   
-#------------------------------------------------------------------------#
+            return None  # Or raise an exception, based on your preference
+        return self.buffer[self.start]
 
-class ClientComms: # Class used by client devices to communicate with usb_cdcor ble (indev)
+#------------------------------------------------------------------------#
+# Create seperate classes for the two roles used by the protocal
+
+class ClientComms: 
     def __init__(self, buffer_size=64):
+        # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
+        
+        # Create flag management dict and total flag count
+        self.is_connected = False 
+        self.flag_count = 0
         self.client_flags = {
         "@jp": 0, # Jam flag
-        "@ir": 0, # Candy flag
-        "@mc": 0, # Candy flag
+        "@ir": 0, # Candy taken flag
+        "@mc": 0, # Candy dispensed flag
         #"report_battery_flag": 0
         }
+        
+    # Create methods for interacting with buffers
 
+    def enqueue_message(self, message):
+        self.OutgoingBuffer.enqueue(message)
+    
+    def dequeue_message(self):
+        if self.IncommingBuffer.if_data():
+            return self.IncommingBuffer.dequeue()
 
-    def enqueue_message(self, message): # Used to put a message in the buffer but not send it
-        message1 = message
-        self.OutgoingBuffer.enqueue(message1)
-        #print("message enqueued")
+    
+    def ser_buffer_if_data(self) -> bool:
+        if usb_cdc.data.in_waiting >= 3:
+            return True
+        else:
+            return False
+    
+    def outgoing_if_data(self) -> bool:
+        return self.OutgoingBuffer.if_data()
 
-    def dequeue_message(self): # Used to pull a message from the incoming buffer
-        message = self.IncommingBuffer.dequeue()
-        if message != None:
-            return message
+    def incoming_if_data(self) -> bool:
+        return self.IncommingBuffer.if_data()
 
-    def recieve_message(self): # Used for testing purposes    
-        #print(f'3 Bytes Recieved: {usb_cdc.data.read(3)} of type {type(usb_cdc.data.read(3))}')
+    # Create async methods for transmitting data
+    async def receive_message(self):
         self.IncommingBuffer.enqueue(usb_cdc.data.read(3).decode('utf-8')) 
 
-    def transmit_message(self): # Used to send a message immediately, best used in an asyncio task
-        message = self.OutgoingBuffer.dequeue()
-        usb_cdc.data.write(message.encode('utf-8'))
-        #print("message transmitted")
+    async def transmit_message(self): 
+        usb_cdc.data.write(self.OutgoingBuffer.dequeue().encode('utf-8'))
 
-    def comm_handler(self):
-        if self.OutgoingBuffer.peek():
-            self.transmit_message()
+    # Create Async Method to handle the connection
+    async def establish_connection(self):
+        while not self.is_connected:
+            if self.ser_buffer_if_data():
+                await self.receive_message()
+                if self.incoming_if_data():
+                    if self.dequeue_message() == comm_dict["establish_connection"]:
+                        self.enqueue_message(ack_dict["~ES"])
+                        await self.transmit_message()
+                        self.is_connected = True
+                        print("Connection Established")
 
-        while usb_cdc.data.in_waiting >= 3:
-            self.receive_message()  # Assuming this method updates an internal queue or similar
-            incoming_message = self.dequeue_message()
+    # Create async method used to handle communications
+    async def comm_handler(self):
+        if not self.is_connected:
+            print("Waiting for Connection to be Established by Host...")
+            await self.establish_connection()
 
-            # Assuming comm_dict's structure is {command: response} and incoming_message is a command
-            if incoming_message in comm_dict:
-                response = ack_dict.get(comm_dict[incoming_message], "Default Ack") # Change this to the error handling command 
-                self.enqueue_message(response)
-                self.transmit_message()
-                print("doing command")
-            else:
-                flag_count = self.client_flags.get(incoming_message, 0)
-                if flag_count > 0:
-                    self.client_flags[incoming_message] -= 1
-                else:
-                    print(f"No such flag: {incoming_message}")
+        async def incoming_comm_handler():
+            while self.ser_buffer_if_data():
+                await self.receive_message()
 
-
-    def establish_connection(self):
-        is_connected = False # Flag used to mark if the client is connected or not
-        while not is_connected:
-            self.comm_handler()
-            if self.dequeue_message() == comm_dict["establish_connection"]:
-                self.enqueue_message(ack_dict["connection_established"])
-                self.comm_handler()
-                print("Host Connected")
-                is_connected = True
+        async def outgoing_comm_handler():
+            while self.outgoing_if_data():
+                await self.transmit_message()
         
-                
-#------------------------------------------------------------------------#
+        await asyncio.gather(
+            incoming_comm_handler(),
+            outgoing_comm_handler()
+        )
 
-class HostComms: # Class used by host devices to communicate over pyserial or ble (indev)
+class HostComms: 
     def __init__(self, buffer_size=64):
+        # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
-        self.com = candyserial.usb_serial()
-        self.is_connected = False
-        self.candy_dispensed = 0
+        self.candyser = candyserial.usb_serial()
+
+        # Create flag management dict and total flag count
+        self.is_connected = False 
+        self.flag_count = 0
         self.host_flags = {
             "@es": 0, # Establish connection flag
             "@ir": 0, # Candy taken flag
             "@mc": 0, # Candy dispensed flag
         }
+        
+    # Create methods for interacting with buffers
 
-            
-    def enqueue_message(self, message): # Used to put a message in the buffer but not send it
-        message = message
+    def enqueue_message(self, message):
         self.OutgoingBuffer.enqueue(message)
+    
+    def dequeue_message(self):
+        if self.IncommingBuffer.if_data():
+            return self.IncommingBuffer.dequeue()
 
-    def dequeue_message(self): # Used to pull a message from the incoming buffer
-        message = self.IncommingBuffer.dequeue()
-        if message != None:
-            return message
+    
+    def ser_buffer_if_data(self) -> bool:
+        return self.candyser.check_ser_buffer()
+    
+    def outgoing_if_data(self) -> bool:
+        return self.OutgoingBuffer.if_data()
 
-    def recieve_message(self): # Used for testing purposes
-        message = self.com.read(3)
-        if message:
-            self.IncommingBuffer.enqueue(message)
-        return None
+    def incoming_if_data(self) -> bool:
+        return self.IncommingBuffer.if_data()
 
-    def transmit_message(self): # Used to send a message immediately, best used in an asyncio task
-        #print("Attempting to dequeue message")
-        message = self.OutgoingBuffer.dequeue()
-        #print(f'Dequeued Message: {message}')
-        self.com.write(message)
+    # Create async methods for transmitting data
+    async def receive_message(self):
+        self.IncommingBuffer.enqueue(self.candyser.read(3)) 
 
-    def comm_handler(self):
-        if self.OutgoingBuffer.peek():
-            self.transmit_message()
+    async def transmit_message(self): 
+        self.candyser.write(self.OutgoingBuffer.dequeue())
 
-        while self.com.check_ser_buffer():
-            self.recieve_message()
-            incoming_message = self.dequeue_message()
+    # Create Async Method to handle the connection
+    async def establish_connection(self):
+        while not self.is_connected:
+            self.enqueue_message(comm_dict["establish_connection"])
+            await asyncio.gather(
+                self.transmit_message(),
+                self.receive_message()
+            )
 
-            if incoming_message in evnt_dict.values():
-                response = ack_dict.get(evnt_dict[incoming_message], "Default Ack")
-                self.enqueue_message(response)
-                self.transmit_message()
-                print("event recieved")
-            else:
-                flag_count = self.host_flags.get(incoming_message, 0)
-                if flag_count > 0:
-                    self.host_flags[incoming_message] -= 1
-                else:
-                    print(f"No such flag: {incoming_message}")
+            if self.dequeue_message() == ack_dict["~ES"]:
+                self.is_connected = True
+                print("Connection Established")
+            
+            await asyncio.sleep(1)
 
-    def establish_connection(self): # Used to establish a connection and await for confirmation
-        self.enqueue_message(comm_dict['establish_connection'])
-        self.comm_handler()
-
-    def dispense_candy(self): 
+    # Create async method used to handle communications
+    async def comm_handler(self):
         if not self.is_connected:
-            print("Please establish connections and try again")
-            return
+            print("Waiting for Connection to be Acknowledged by Client")
+            await self.establish_connection()
 
-        self.enqueue_message(comm_dict["dispense_candy"])
-        self.dispense_ack_expected += 1
-       
+        async def incoming_comm_handler():
+            while self.ser_buffer_if_data():
+                await self.receive_message()
+
+        async def outgoing_comm_handler():
+            while self.outgoing_if_data():
+                await self.transmit_message()
+        
+        await asyncio.gather(
+            incoming_comm_handler(),
+            outgoing_comm_handler()
+        )
+
