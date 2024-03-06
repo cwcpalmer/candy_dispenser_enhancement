@@ -1,7 +1,7 @@
 # Asyncio based rewrite of candycom
 # Written by Michael Lance
 # 3/5/2024
-#------------------------------------------------------#
+#------------------------------------------------------------------------#
 
 # import different libraries depending upon platform
 import asyncio
@@ -15,7 +15,7 @@ elif sys.implementation.name == 'circuitpython':
     import usb_cdc
     candyserial = None  # Used to appease the interpreter
 
-#------------------------------------------------------#
+#------------------------------------------------------------------------#
 # Create dictionaries to store command, event, and acks
 
 comm_dict = {
@@ -164,6 +164,12 @@ class ClientComms:
             outgoing_comm_handler()
         )
 
+        while self.flag_count > 0: # Flag handling for now
+            checked_message = self.IncommingBuffer.peek()
+            if checked_message in self.client_flags:
+                self.client_flags_flags[checked_message] -= 1
+                self.flag_count -= 1
+
 class HostComms: 
     def __init__(self, buffer_size=64):
         # Create two buffer instances
@@ -240,3 +246,9 @@ class HostComms:
             outgoing_comm_handler()
         )
 
+        while self.flag_count > 0: # Flag handling for now
+            checked_message = self.IncommingBuffer.peek()
+            if checked_message in self.host_flags:
+                self.host_flags[checked_message] -= 1
+                self.flag_count -= 1
+    
