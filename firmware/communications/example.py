@@ -7,10 +7,14 @@ import asyncio
 
 candycomms = candycom.HostComms()
 
+async def send_input_command():
+    comamnd = candycom.comm_dict["establish_connection"]
+    candycomms.enqueue_message(comamnd)
 async def main():
     await candycomms.comm_handler()
-    comamnd = input("send a command to the candy machine")
-    candycomms.enqueue_message(comamnd)
+    await send_input_command()
+    await asyncio.sleep(1)
+
 
 while True:
     asyncio.run(main())
