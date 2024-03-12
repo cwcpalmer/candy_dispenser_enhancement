@@ -10,12 +10,16 @@ import asyncio
 candycomms = candycom.ClientComms()
 testmotor = motorcontrol.StepperMotor()
 
+
 async def main():
-    await candycomms.comm_handler()
-    message = candycomms.dequeue_message()
+    await candycomms.establish_connection()
+    while True:
+        if candycomms.IncommingBuffer.peek() == candycom.comm_dict["dispense_candy"]:
+            candycomms.dequeue_message()
 
-    if message == candycom.comm_dict["dispense_candy"]:
-        testmotor.rotate_motor()
+            testmotor.rotate_motor()
+        elif candycomms.IncommingBuffer.peek() == "~ES":
+            candycomms.dequeue_message()
 
-while True:
-    asyncio.run(main())
+        await asyncio.sleep(0.1) 
+asyncio.run(main())

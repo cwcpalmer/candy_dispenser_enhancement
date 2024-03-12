@@ -48,5 +48,9 @@ class StepperMotor:
                     self.motor_pin_2.value = self.steps[step_index][1]
                     self.motor_pin_3.value = self.steps[step_index][2]
                     self.motor_pin_4.value = self.steps[step_index][3]
-                    time.sleep(0.008 )
+                    time.sleep(0.008)
 
+            self.motor_pin_1.value = self.steps[4][0] 
+            self.motor_pin_2.value = self.steps[4][1]
+            self.motor_pin_3.value = self.steps[4][2]
+            self.motor_pin_4.value = self.steps[4][3]

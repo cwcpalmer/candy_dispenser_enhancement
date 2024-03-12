@@ -6,6 +6,7 @@
 import sys
 import serial 
 import serial.tools.list_ports
+import asyncio
 
 #------------------------------------------------------------------------#
 # Create function to determine the platform that the library is ran from
@@ -24,8 +25,9 @@ def find_circuitpython_device():
     return None
 #------------------------------------------------------------------------#
 
+
 class usb_serial:
-    def __init__(self, device=None, baudrate=9600):
+    def __init__(self, device="/dev/ttyACM2", baudrate=9600):
         if device is None:
             device = find_circuitpython_device()
             if device is None:
@@ -38,6 +40,10 @@ class usb_serial:
         else:
             print(f"Failed to open serial port {device}.")
             exit()
+
+    def flush_ser_buffer(self):
+        self.ser.reset_input_buffer()
+        self.ser.reset_output_buffer()
 
     def write(self, data):
         if isinstance(data, str):
