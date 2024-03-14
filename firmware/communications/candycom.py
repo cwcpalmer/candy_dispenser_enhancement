@@ -11,8 +11,10 @@ import time
 if sys.implementation.name != 'circuitpython':
     import candyserial
     usb_cdc = None # Used to appease the interpreter
+    motorcontrol = None
 elif sys.implementation.name == 'circuitpython':
     import usb_cdc
+    import motorcontrol
     candyserial = None  # Used to appease the interpreter
 
 #------------------------------------------------------------------------#
@@ -99,6 +101,8 @@ class ClientComms:
         # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
+        self.stepper_motor = motorcontrol.StepperMotor()
+
         # Create watchdog management variables
         self.watchdog_timeout = 64 # Roughly every half-second
         self.watchdog_timer = 0
@@ -205,8 +209,10 @@ class ClientComms:
         while self.is_connected:
             await asyncio.gather(
                 incoming_comm_handler(),
-                outgoing_comm_handler()
+                outgoing_comm_handler(),
             )
+            await self.command_interpreter()
+
     
     # Create async method to handle connection establishment
     async def establish_connection(self):
@@ -225,8 +231,21 @@ class ClientComms:
         print("Connection Established")  
         # Run comm_handler and connection_watchdog as background tasks
         self.run_comm_handler = asyncio.create_task(self.comm_handler())
-        self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())        
+        self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
 
+    async def dispense_candy(self):
+        await self.stepper_motor.rotate_motor()
+
+    async def command_interpreter(self):
+        command_interpertations = {
+            "~ID"   :    self.dispense_candy
+        }
+        
+        if self.check_data_incoming:
+            message = self.dequeue_message()
+
+            if message in command_interpertations:
+                await command_interpertations[message]()
 
 #------------------------------------------------------------------------#
 # Create Class for the Host side of the protocal
@@ -355,5 +374,8 @@ class HostComms:
         self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
         self.OutgoingBuffer.flush()
                     
-               
+    # Create Command methods
 
+    def dispense_candy(self):
+        self.enqueue_message(comm_dict["dispense_candy"])
+ 

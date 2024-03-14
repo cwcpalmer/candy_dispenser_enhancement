@@ -1,18 +1,32 @@
 # Experimental Stepper Motor Control Library for GIRRLS
 # Written by Michael Lance
 # 3/5/2024
+# Updated: 3/14/2024
 #------------------------------------------------------#
 
 # Import Libraries needed to interact with micro controller
 import board
 from digitalio import DigitalInOut, Direction, Pull
 import time
+import asyncio
 
 #------------------------------------------------------#
 
 # Create Stepper Motor Class
 class StepperMotor:
     def __init__(self):
+        # Define GPIO Pins to interact with the beam breakers
+        self.candy_dispensed = DigitalInOut(board.A0)
+        self.candy_dispensed.direction = Direction.INPUT
+        self.candy_dispensed.pull = Pull.UP
+
+        # Define boolean to control whether or not candy has been dispensed
+        self.successful_dispense = False
+
+        # Define GPIO Pins to control the LED
+        self.led = DigitalInOut(board.D3)
+        self.led.direction = Direction.OUTPUT
+
         # Define GPIO Pins to interact with the stepper motor
         self.motor_pin_1 = DigitalInOut(board.D5)
         self.motor_pin_1.direction = Direction.OUTPUT
@@ -41,8 +55,9 @@ class StepperMotor:
             [False, False, False, False] # OFF
         ]   
 
-    def rotate_motor(self, num_steps=64):
-            for rotation in range(num_steps):
+    async def rotate_motor(self):
+
+            while not self.successful_dispense:
                 for step_index in range(len(self.steps)):
                     self.motor_pin_1.value = self.steps[step_index][0]
                     self.motor_pin_2.value = self.steps[step_index][1]
@@ -50,7 +65,15 @@ class StepperMotor:
                     self.motor_pin_4.value = self.steps[step_index][3]
                     time.sleep(0.008)
 
+                if self.candy_dispensed.value:
+                    self.led.value = False
+                else:
+                    self.led.value = True
+                    self.successful_dispense = True
+
             self.motor_pin_1.value = self.steps[4][0] 
             self.motor_pin_2.value = self.steps[4][1]
             self.motor_pin_3.value = self.steps[4][2]
             self.motor_pin_4.value = self.steps[4][3]
+            self.successful_dispense = False
+            return

@@ -27,7 +27,7 @@ def find_circuitpython_device():
 
 
 class usb_serial:
-    def __init__(self, device="/dev/ttyACM2", baudrate=9600):
+    def __init__(self, device='/dev/ttyACM1', baudrate=9600):
         if device is None:
             device = find_circuitpython_device()
             if device is None:
