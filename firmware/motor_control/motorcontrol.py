@@ -56,24 +56,23 @@ class StepperMotor:
         ]   
 
     async def rotate_motor(self):
+        while not self.successful_dispense:
+            for step_index in range(len(self.steps)):
+                self.motor_pin_1.value = self.steps[step_index][0]
+                self.motor_pin_2.value = self.steps[step_index][1]
+                self.motor_pin_3.value = self.steps[step_index][2]
+                self.motor_pin_4.value = self.steps[step_index][3]
+                time.sleep(0.008)
 
-            while not self.successful_dispense:
-                for step_index in range(len(self.steps)):
-                    self.motor_pin_1.value = self.steps[step_index][0]
-                    self.motor_pin_2.value = self.steps[step_index][1]
-                    self.motor_pin_3.value = self.steps[step_index][2]
-                    self.motor_pin_4.value = self.steps[step_index][3]
-                    time.sleep(0.008)
+            if self.candy_dispensed.value:
+                self.led.value = False
+            else:
+                self.led.value = True
+                self.successful_dispense = True
 
-                if self.candy_dispensed.value:
-                    self.led.value = False
-                else:
-                    self.led.value = True
-                    self.successful_dispense = True
-
-            self.motor_pin_1.value = self.steps[4][0] 
-            self.motor_pin_2.value = self.steps[4][1]
-            self.motor_pin_3.value = self.steps[4][2]
-            self.motor_pin_4.value = self.steps[4][3]
-            self.successful_dispense = False
-            return
+        self.motor_pin_1.value = self.steps[4][0] 
+        self.motor_pin_2.value = self.steps[4][1]
+        self.motor_pin_3.value = self.steps[4][2]
+        self.motor_pin_4.value = self.steps[4][3]
+        self.successful_dispense = False
+        return

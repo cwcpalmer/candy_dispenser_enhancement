@@ -7,6 +7,8 @@
 import asyncio
 import sys
 import time
+import candyble
+
 
 if sys.implementation.name != 'circuitpython':
     import candyserial
@@ -97,12 +99,18 @@ class CircBuffer:
 # Create Class for the client side of the protocal
 
 class ClientComms: 
-    def __init__(self, buffer_size=64):
+    def __init__(self, comm_mode="serial", buffer_size=64):
         # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
         self.stepper_motor = motorcontrol.StepperMotor()
-
+        self.comm_mode = comm_mode
+        if self.comm_mode == "ble":
+            print("BLE enabled: broadcasting advertisment, stand by...")
+            self.ble_ser = candyble.BleClient()
+        elif self.comm_mode == "serial":
+            if usb_cdc.data.in_waiting:
+                usb_cdc.read(usb_cdc.data.in_waiting)
         # Create watchdog management variables
         self.watchdog_timeout = 64 # Roughly every half-second
         self.watchdog_timer = 0
@@ -118,10 +126,16 @@ class ClientComms:
         
     # Create methods for interacting with buffers
     def check_data_on_serial(self) -> bool:
-        if usb_cdc.data.in_waiting >= 3:
-            return True
-        else:
-            return False
+        if self.comm_mode == "serial":
+            if usb_cdc.data.in_waiting >= 3:
+                return True
+            else:
+                return False
+        elif self.comm_mode == "ble":
+            if self.ble_ser.uart.in_waiting >= 3:
+                return True
+            else:
+                return False
     
     def check_data_outgoing(self) -> bool:
         return self.OutgoingBuffer.check_data()
@@ -153,14 +167,20 @@ class ClientComms:
  
     # Create async methods for transmitting data
     async def receive_message(self):
-        message = usb_cdc.data.read(3).decode('utf-8')
+        if self.comm_mode == "serial":
+            message = usb_cdc.data.read(3).decode('utf-8')
+        elif self.comm_mode == "ble":
+            message = self.ble_ser.read()
         print(f'recieved: {message}')
         self.IncommingBuffer.enqueue(message) 
 
     async def transmit_message(self): 
         message = self.OutgoingBuffer.dequeue()
         print(f'transmitted: {message}') 
-        usb_cdc.data.write(message.encode('utf-8'))
+        if self.comm_mode == "serial":
+            usb_cdc.data.write(message.encode('utf-8'))
+        elif self.comm_mode == 'ble':
+            self.ble_ser.write(message)
 
     # Create async watchdog method to maintain the connection
     async def connection_watchdog(self):
@@ -217,6 +237,7 @@ class ClientComms:
     # Create async method to handle connection establishment
     async def establish_connection(self):
         print("Waiting for connection to be established")
+        
         while not self.is_connected:
             if self.check_data_on_serial():
                 await self.receive_message()
@@ -234,8 +255,9 @@ class ClientComms:
         self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
 
     async def dispense_candy(self):
-        await self.stepper_motor.rotate_motor()
 
+        await self.stepper_motor.rotate_motor()
+        
     async def command_interpreter(self):
         command_interpertations = {
             "~ID"   :    self.dispense_candy
@@ -243,20 +265,23 @@ class ClientComms:
         
         if self.check_data_incoming:
             message = self.dequeue_message()
-
             if message in command_interpertations:
                 await command_interpertations[message]()
-
 #------------------------------------------------------------------------#
 # Create Class for the Host side of the protocal
 
 class HostComms: 
-    def __init__(self, buffer_size=64):
+    def __init__(self, comm_mode="serial", buffer_size=64):
         # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
-        self.candyser = candyserial.usb_serial()
-        self.candyser.flush_ser_buffer()
+        self.comm_mode = comm_mode
+        if self.comm_mode == "serial":
+            self.candyser = candyserial.usb_serial()
+            self.candyser.flush_ser_buffer()
+        elif self.comm_mode == "ble":
+            print("BLE enabled... Searching for client...")
+            self.ble_ser = candyble.BleHost()
         # Create watchdog management variables
         self.watchdog_timeout = 64
         self.watchdog_timer = 0
@@ -273,7 +298,11 @@ class HostComms:
         
     # Create methods for interacting with buffers
     def check_data_on_serial(self) -> bool:
-        return self.candyser.check_ser_buffer()
+        if self.comm_mode == 'serial':
+            return self.candyser.check_ser_buffer()
+        elif self.comm_mode == 'ble':
+            if self.ble_ser.uart_service.in_waiting >= 3:
+                return True
     
     def check_data_outgoing(self) -> bool:
         return self.OutgoingBuffer.check_data()
@@ -305,14 +334,20 @@ class HostComms:
 
     # Create async methods for transmitting data
     async def receive_message(self):
-        message = self.candyser.read(3)
+        if self.comm_mode == 'serial':
+            message = self.candyser.read(3)
+        elif self.comm_mode == 'ble' :
+            message = self.ble_ser.read()
         print(f'recieved: {message}')
         self.IncommingBuffer.enqueue(message) 
 
     async def transmit_message(self):
         message = self.OutgoingBuffer.dequeue()
         print(f'transmitted: {message}') 
-        self.candyser.write(message)
+        if self.comm_mode == 'serial':
+            self.candyser.write(message)
+        elif self.comm_mode == 'ble':
+            self.ble_ser.write(message)
 
     async def connection_watchdog(self):
         print("running watchdog")
