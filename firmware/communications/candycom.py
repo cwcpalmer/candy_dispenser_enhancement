@@ -14,10 +14,18 @@ if sys.implementation.name != 'circuitpython':
     import candyserial
     usb_cdc = None # Used to appease the interpreter
     motorcontrol = None
+    digitalio = None
+    neopixel = None
+    board = None
+    is_arduino = False
 elif sys.implementation.name == 'circuitpython':
     import usb_cdc
     import motorcontrol
+    import digitalio
+    import neopixel
+    import board
     candyserial = None  # Used to appease the interpreter
+    is_arduino = True
 
 #------------------------------------------------------------------------#
 # Create dictionaries to store command, event, and acks
@@ -100,6 +108,12 @@ class CircBuffer:
 
 class ClientComms: 
     def __init__(self, comm_mode="serial", buffer_size=64):
+        # Configure arduino pins
+        self.connected_led = digitalio.DigitalInOut(board.BLUE_LED)
+        self.connected_led.direction = digitalio.Direction.OUTPUT
+        self.pixel_shutoff = time.monotonic()
+        self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)               
+
         # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
@@ -218,13 +232,13 @@ class ClientComms:
             if self.check_data_on_serial():             
                 await self.receive_message()
             else:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.01)
 
         async def outgoing_comm_handler():
             if self.check_data_outgoing():                
                 await self.transmit_message()
             else:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.01)
 
         while self.is_connected:
             await asyncio.gather(
@@ -237,7 +251,8 @@ class ClientComms:
     # Create async method to handle connection establishment
     async def establish_connection(self):
         print("Waiting for connection to be established")
-        
+        self.connected_led.value = False
+
         while not self.is_connected:
             if self.check_data_on_serial():
                 await self.receive_message()
@@ -247,15 +262,17 @@ class ClientComms:
                     print("Connetion Established by host")
                     self.is_connected = True 
                     self.IncommingBuffer.flush()
+                    self.connected_led.value = True
             
             await asyncio.sleep(0.5)
-        print("Connection Established")  
         # Run comm_handler and connection_watchdog as background tasks
         self.run_comm_handler = asyncio.create_task(self.comm_handler())
-        self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
+        if self.comm_mode == "serial":
+            self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
 
     async def dispense_candy(self):
-
+        self.pixel_shutoff = time.monotonic() +0.5
+        self.pixels[0] = (0, 10, 0)
         await self.stepper_motor.rotate_motor()
         
     async def command_interpreter(self):
@@ -267,11 +284,20 @@ class ClientComms:
             message = self.dequeue_message()
             if message in command_interpertations:
                 await command_interpertations[message]()
+                self.enqueue_message(ack_dict[message])
 #------------------------------------------------------------------------#
 # Create Class for the Host side of the protocal
 
 class HostComms: 
     def __init__(self, comm_mode="serial", buffer_size=64):
+        # configure arduino pins if host is arduino
+        global is_arduino
+        if is_arduino:
+            self.connected_led = digitalio.DigitalInOut(board.BLUE_LED)
+            self.connected_led.direction = digitalio.Direction.OUTPUT
+            self.pixel_shutoff = time.monotonic()
+            self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)  
+
         # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
@@ -375,22 +401,26 @@ class HostComms:
             if self.check_data_on_serial():
                 await self.receive_message()
             else:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.01)
 
         async def outgoing_comm_handler():
             if self.check_data_outgoing():
                 await self.transmit_message()
             else:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.01)
         while self.is_connected:
             await asyncio.gather(
                 incoming_comm_handler(),
                 outgoing_comm_handler()
-            )  
+            )
+        
+        if time.monotonic() > pixel_shutoff:
+            pixels[0] = (0, 0, 0)
 
     # Create Async Method to handle the connection
     async def establish_connection(self):
         print("attempting to establish connection")
+        self.connected_led.value = False
         while not self.is_connected:
             self.enqueue_message(comm_dict["establish_connection"])     
             await self.transmit_message()
@@ -400,17 +430,22 @@ class HostComms:
                 message = self.dequeue_message()
                 print(message)
                 if message == ack_dict["~ES"]:
-                    print("Connection Established")
                     # Run comm_handler and connection_watchdog as background tasks
                     self.is_connected = True 
+                    self.connected_led.value = True
             await asyncio.sleep(1)
         print("Connection Established")     
         self.run_comm_handler = asyncio.create_task(self.comm_handler())
-        self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
+        if self.comm_mode == "serial":
+            self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
         self.OutgoingBuffer.flush()
                     
     # Create Command methods
 
     def dispense_candy(self):
+        global is_arduino
+        if is_arduino:
+            self.pixel_shutoff = time.monotonic() + 0.5
+            self.pixels[0] = (10, 0, 0)
         self.enqueue_message(comm_dict["dispense_candy"])
  
