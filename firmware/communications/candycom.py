@@ -246,7 +246,8 @@ class ClientComms:
                 outgoing_comm_handler(),
             )
             await self.command_interpreter()
-
+            if time.monotonic() > self.pixel_shutoff:
+                self.pixels[0] = (0, 0, 0)
     
     # Create async method to handle connection establishment
     async def establish_connection(self):
@@ -414,8 +415,8 @@ class HostComms:
                 outgoing_comm_handler()
             )
         
-        if time.monotonic() > pixel_shutoff:
-            pixels[0] = (0, 0, 0)
+            if time.monotonic() > self.pixel_shutoff:
+                self.pixels[0] = (0, 0, 0)
 
     # Create Async Method to handle the connection
     async def establish_connection(self):
