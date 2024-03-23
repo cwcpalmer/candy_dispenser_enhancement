@@ -1,41 +1,35 @@
-# TODO: print the response in the log after recieving a response - Might be functional
-
 import tkinter as tk
 import time
 import candycom
+import asyncio
 
 last_time = time.time()
 
 log_entries = []
 
-candycomms = candycom.HostComms()
-candycom.determine_platform()
+candycomms = None
 
 def connect_usb():
-	add_to_log("Connect USB")
-	"""
-	establish = candycom.comm_dict["establish_connection"]
-	candycomms.enqueue_message(establish)
-	"""
-	candycomms.establish_connection()
-	return 
+    global candycomms
+    add_to_log("Connect USB")
+    candycomms = candycom.HostComms('serial')
+    asyncio.run(candycomms.establish_connection())
 
 def connect_ble():
-	add_to_log("Connect BLE")
-	return
+    global candycomms
+    add_to_log("Connect BLE")
+    candycomms = candycom.HostComms('ble')
+    asyncio.run(candycomms.establish_connection())
 
 def dispense_candy():
-	add_to_log("Request Dispense Candy")
-	"""
-	dispense = candycom.comm_dict["dispense_candy"]
-	candycomms.enqueue_message(dispense)
-	"""
-	candycomms.dispense_candy()
-	return
+    add_to_log("Request Dispense Candy")
+    candycomms.enqueue_message("~ID")
+    asyncio.run(candycomms.transmit_message())
+    poll_messages()
 
 def get_battery_level():
 	add_to_log("Getting Battery Level")
-	return
+
 
 def add_to_log(message):
 	 global last_time, log_entries
@@ -52,16 +46,14 @@ def save_log():
 			writer.write(log_line)
 	return
 
-def update_log_from_async(message):
-	text_log.insert(tk.END, "Async: " + message + "\n")
-	log_entries.append("Async: " + message + "\n")
-
 def poll_messages():
-	message = candycomms.receive_message()
-	if message:
-		update_log_from_async(message)
-	# Schedule poll_messages to be called again after 100 milliseconds
-	main_window.after(100, poll_messages)
+    asyncio.run(candycomms.receive_message())
+    message = candycomms.dequeue_message()
+    if message != None:
+        if message == "@iD":
+            add_to_log('Candy Dispensed')
+    # Schedule poll_messages to be called again after 100 milliseconds
+    main_window.after(100, poll_messages)
 
 
 main_window = tk.Tk()

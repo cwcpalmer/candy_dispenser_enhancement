@@ -2,10 +2,9 @@ import candycom # Import the candycom library
 import time
 import asyncio
 
-#TODO
-# Send an ES command to start communications
 
-Host = candycom.HostComms()
+
+Host = candycom.HostComms("ble")
 
 
 async def main():
