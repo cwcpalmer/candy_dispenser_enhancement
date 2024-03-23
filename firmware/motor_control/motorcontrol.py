@@ -20,19 +20,16 @@ class StepperMotor:
         self.candy_dispensed.direction = Direction.INPUT
         self.candy_dispensed.pull = Pull.UP
 
-        # Define boolean to control whether or not candy has been dispensed
-        self.successful_dispense = False
-
-        # Define GPIO Pins to control the LED
+        # Define boolean to control whether or not candy has been dispensed2
         self.led = DigitalInOut(board.D3)
         self.led.direction = Direction.OUTPUT
 
         # Define GPIO Pins to interact with the stepper motor
-        self.motor_pin_1 = DigitalInOut(board.D5)
+        self.motor_pin_1 = DigitalInOut(board.D11)
         self.motor_pin_1.direction = Direction.OUTPUT
         self.motor_pin_1.value = False
 
-        self.motor_pin_2 = DigitalInOut(board.D6)
+        self.motor_pin_2 = DigitalInOut(board.D10)
         self.motor_pin_2.direction = Direction.OUTPUT
         self.motor_pin_2.value = False
 
@@ -40,20 +37,20 @@ class StepperMotor:
         self.motor_pin_3.direction = Direction.OUTPUT
         self.motor_pin_3.value = False
 
-        self.motor_pin_4 = DigitalInOut(board.D10)
+        self.motor_pin_4 = DigitalInOut(board.D6)
         self.motor_pin_4.direction = Direction.OUTPUT
         self.motor_pin_4.value = False
 
         self.cur_step_index = 0
-
+        self.successful_dispense = False
 
         self.steps = [
             [True, False, False, False],
             [False, True, False, False],
             [False, False, True, False],
-            [False, False, False, True],
-            [False, False, False, False] # OFF
+            [False, False, False, True],    
         ]   
+        self.motor_off = [False, False, False, False] # OFF
 
     async def rotate_motor(self):
         while not self.successful_dispense:
@@ -62,7 +59,7 @@ class StepperMotor:
                 self.motor_pin_2.value = self.steps[step_index][1]
                 self.motor_pin_3.value = self.steps[step_index][2]
                 self.motor_pin_4.value = self.steps[step_index][3]
-                time.sleep(0.008)
+                time.sleep(0.004)
 
             if self.candy_dispensed.value:
                 self.led.value = False
@@ -70,9 +67,10 @@ class StepperMotor:
                 self.led.value = True
                 self.successful_dispense = True
 
-        self.motor_pin_1.value = self.steps[4][0] 
-        self.motor_pin_2.value = self.steps[4][1]
-        self.motor_pin_3.value = self.steps[4][2]
-        self.motor_pin_4.value = self.steps[4][3]
+        self.motor_pin_1.value = self.motor_off[0] 
+        self.motor_pin_2.value = self.motor_off[1]
+        self.motor_pin_3.value = self.motor_off[2]
+        self.motor_pin_4.value = self.motor_off[3]
         self.successful_dispense = False
+        self.led.value = False
         return
