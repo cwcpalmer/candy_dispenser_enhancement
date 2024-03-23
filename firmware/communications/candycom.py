@@ -113,18 +113,15 @@ class ClientComms:
         self.connected_led.direction = digitalio.Direction.OUTPUT
         self.pixel_shutoff = time.monotonic()
         self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)               
-
+        self.candy_taken_trigger = digitalio.DigitalInOut(board.A1)
+        self.candy_taken_trigger.direction = digitalio.Direction.INPUT
+        self.candy_taken_trigger.pull = digitalio.Pull.UP
         # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
         self.stepper_motor = motorcontrol.StepperMotor()
         self.comm_mode = comm_mode
-        if self.comm_mode == "ble":
-            print("BLE enabled: broadcasting advertisment, stand by...")
-            self.ble_ser = candyble.BleClient()
-        elif self.comm_mode == "serial":
-            if usb_cdc.data.in_waiting:
-                usb_cdc.read(usb_cdc.data.in_waiting)
+    
         # Create watchdog management variables
         self.watchdog_timeout = 64 # Roughly every half-second
         self.watchdog_timer = 0
@@ -134,7 +131,6 @@ class ClientComms:
         self.client_flags = {
         "@jp": 0, # Jam flag
         "@ir": 0, # Candy taken flag
-        "@mc": 0, # Candy dispensed flag
         #"report_battery_flag": 0
         }
         
@@ -166,7 +162,7 @@ class ClientComms:
         elif message in ack_dict.values():
             self.OutgoingBuffer.enqueue(message)
         else:
-            print("Warning: Unrecognized message, nothing enqeued")
+            return
 
     def dequeue_message(self):
         if self.IncommingBuffer.check_data():
@@ -249,8 +245,21 @@ class ClientComms:
             if time.monotonic() > self.pixel_shutoff:
                 self.pixels[0] = (0, 0, 0)
     
+    async def watch_for_taken(self):
+        print("watching for candy taken")
+        while self.candy_taken_trigger.value == True:
+            await asyncio.sleep(0.5)
+        self.enqueue_message(comm_dict["candy_taken"])
+
     # Create async method to handle connection establishment
     async def establish_connection(self):
+        if self.comm_mode == "serial":
+            while usb_cdc.data.in_waiting:
+                usb_cdc.read(usb_cdc.data.in_waiting)
+        elif self.comm_mode == "ble":
+            print("BLE enabled: waiting for host...")
+            self.ble_ser = candyble.BleClient()
+            
         print("Waiting for connection to be established")
         self.connected_led.value = False
 
@@ -286,6 +295,8 @@ class ClientComms:
             if message in command_interpertations:
                 await command_interpertations[message]()
                 self.enqueue_message(ack_dict[message])
+                watch_candy = asyncio.create_task(self.watch_for_taken())
+
 #------------------------------------------------------------------------#
 # Create Class for the Host side of the protocal
 
@@ -293,22 +304,19 @@ class HostComms:
     def __init__(self, comm_mode="serial", buffer_size=64):
         # configure arduino pins if host is arduino
         global is_arduino
+        self.candy_dispensed = False
+        self.candy_taken = False
         if is_arduino:
             self.connected_led = digitalio.DigitalInOut(board.BLUE_LED)
             self.connected_led.direction = digitalio.Direction.OUTPUT
             self.pixel_shutoff = time.monotonic()
             self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)  
+        
 
         # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
         self.comm_mode = comm_mode
-        if self.comm_mode == "serial":
-            self.candyser = candyserial.usb_serial()
-            self.candyser.flush_ser_buffer()
-        elif self.comm_mode == "ble":
-            print("BLE enabled... Searching for client...")
-            self.ble_ser = candyble.BleHost()
         # Create watchdog management variables
         self.watchdog_timeout = 64
         self.watchdog_timer = 0
@@ -356,7 +364,9 @@ class HostComms:
                 self.flag_count -= 1
             if message in comm_dict.keys():
                 self.enqueue_message(ack_dict[message])
-        return message
+            return message
+        else:
+            return
             
 
     # Create async methods for transmitting data
@@ -420,8 +430,15 @@ class HostComms:
 
     # Create Async Method to handle the connection
     async def establish_connection(self):
+        if self.comm_mode == "serial":
+            self.candyser = candyserial.usb_serial()
+            self.candyser.flush_ser_buffer()
+        elif self.comm_mode == "ble":
+            print("BLE enabled... Searching for client...")
+            self.ble_ser = candyble.BleHost()
         print("attempting to establish connection")
-        self.connected_led.value = False
+        if is_arduino:
+            self.connected_led.value = False
         while not self.is_connected:
             self.enqueue_message(comm_dict["establish_connection"])     
             await self.transmit_message()
@@ -433,20 +450,38 @@ class HostComms:
                 if message == ack_dict["~ES"]:
                     # Run comm_handler and connection_watchdog as background tasks
                     self.is_connected = True 
-                    self.connected_led.value = True
+                    if is_arduino:
+                        self.connected_led.value = True
             await asyncio.sleep(1)
         print("Connection Established")     
         self.run_comm_handler = asyncio.create_task(self.comm_handler())
+        self.run_event_handler = asyncio.create_task(self.event_handler())
         if self.comm_mode == "serial":
             self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
         self.OutgoingBuffer.flush()
                     
     # Create Command methods
-
     def dispense_candy(self):
         global is_arduino
         if is_arduino:
             self.pixel_shutoff = time.monotonic() + 0.5
             self.pixels[0] = (10, 0, 0)
         self.enqueue_message(comm_dict["dispense_candy"])
- 
+
+    async def event_handler(self):
+        print("running event_handler")
+        while self.is_connected:
+            if self.IncommingBuffer.peek() == ack_dict["~ID"]:
+                self.dequeue_message()
+                self.candy_dispensed = True
+                await asyncio.sleep(1)
+                self.candy_dispensed = False
+
+            elif self.IncommingBuffer.peek() == comm_dict["candy_taken"]:
+                self.dequeue_message()
+                self.enqueue_message(ack_dict["%IR"])
+                self.candy_taken = True
+                await asyncio.sleep(1)
+                self.candy_taken = False
+            else:
+                await asyncio.sleep(0.5)

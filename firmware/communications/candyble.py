@@ -1,6 +1,7 @@
 # BLE attempt at creating ble integration for candycom
 # By Charles Palmer and Michael Lance
 # 3/14/2024
+# Updated 3/16/2024
 #-----------------------------------------------------------------------------------------------------------------------------------------------------------------#
 # Import all libraries needed to interact with bluetooth low energy
 
@@ -10,6 +11,7 @@ from adafruit_ble.services.nordic import UARTService
 import board
 import digitalio
 import time
+import sys
 
 class BleClient():
     def __init__(self):
@@ -31,8 +33,6 @@ class BleClient():
         while not self.ble.connected:    
             pass
 
-        print("ble connected")
-
     def write(self, data):
         data = data.encode('utf-8') 
         self.uart.write(data)
@@ -49,25 +49,14 @@ class BleHost():
         self.uart_connection = None
         self.uart_service = None
 
-        #self.connected_led = digitalio.DigitalInOut(board.BLUE_LED)
-        #self.connected_led.direction = digitalio.Direction.OUTPUT 
-
-        #self.pixel_shutoff = time.monotonic()
-        #self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)
-
-    
-        #self.connected_led.value = False
         if not self.uart_connection:
             for adv in self.ble.start_scan(ProvideServicesAdvertisement):
-   
-                if adv.complete_name == 'CANDYMAN':
+                if UARTService in adv.services:
                     self.uart_connection = self.ble.connect(adv)
                     break
         self.ble.stop_scan()
         if self.uart_connection and self.uart_connection.connected:
             self.uart_service = self.uart_connection[UARTService]
-
-        print("ble connected")
 
     def write(self, data):
         data = data.encode('utf-8') 
