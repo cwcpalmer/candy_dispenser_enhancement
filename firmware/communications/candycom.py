@@ -1,6 +1,7 @@
 # Asyncio based rewrite of candycom
 # Written by Michael Lance & Thomas Baker
 # 3/5/2024
+# Updated: 3/23/2024
 #------------------------------------------------------------------------#
 
 # import different libraries depending upon platform
@@ -8,7 +9,6 @@ import asyncio
 import sys
 import time
 import candyble
-
 
 if sys.implementation.name != 'circuitpython':
     import candyserial
@@ -101,21 +101,18 @@ class CircBuffer:
         while not self.is_empty():
             print('removing from buffer')
             self.dequeue()
-
-
 #------------------------------------------------------------------------#
 # Create Class for the client side of the protocal
 
 class ClientComms: 
     def __init__(self, comm_mode="serial", buffer_size=64):
-        # Configure arduino pins
+        # Configure conection leds
         self.connected_led = digitalio.DigitalInOut(board.BLUE_LED)
         self.connected_led.direction = digitalio.Direction.OUTPUT
-        self.pixel_shutoff = time.monotonic()
-        self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)               
-        self.candy_taken_trigger = digitalio.DigitalInOut(board.A1)
-        self.candy_taken_trigger.direction = digitalio.Direction.INPUT
-        self.candy_taken_trigger.pull = digitalio.Pull.UP
+        self.timeout = time.monotonic()
+        self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)   
+        # Configure beam breakers for candy taken            
+
         # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
@@ -241,9 +238,13 @@ class ClientComms:
                 incoming_comm_handler(),
                 outgoing_comm_handler(),
             )
-            await self.command_interpreter()
-            if time.monotonic() > self.pixel_shutoff:
+
+            if time.monotonic() > self.timeout:
                 self.pixels[0] = (0, 0, 0)
+
+            if self.check_data_incoming():
+                await self.mesage_interpreter()
+
     
     async def watch_for_taken(self):
         print("watching for candy taken")
@@ -281,46 +282,48 @@ class ClientComms:
             self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
 
     async def dispense_candy(self):
-        self.pixel_shutoff = time.monotonic() +0.5
+        self.timeout = time.monotonic() +0.5
         self.pixels[0] = (0, 10, 0)
         await self.stepper_motor.rotate_motor()
+        self.enqueue_message(ack_dict[comm_dict["dispense_candy"]])
+        #watch_candy = asyncio.create_task(self.watch_for_taken())
         
-    async def command_interpreter(self):
-        command_interpertations = {
+    async def mesage_interpreter(self):
+        message_interpertations = {
             "~ID"   :    self.dispense_candy
         }
         
-        if self.check_data_incoming:
-            message = self.dequeue_message()
-            if message in command_interpertations:
-                await command_interpertations[message]()
-                self.enqueue_message(ack_dict[message])
-                watch_candy = asyncio.create_task(self.watch_for_taken())
+        message = self.dequeue_message()
+        if message in message_interpertations:
+            await message_interpertations[message]()
+
 
 #------------------------------------------------------------------------#
 # Create Class for the Host side of the protocal
 
 class HostComms: 
     def __init__(self, comm_mode="serial", buffer_size=64):
-        # configure arduino pins if host is arduino
+       # determine the means of communications to be used
+        self.comm_mode = comm_mode
+
+        # configure host based on platform
         global is_arduino
-        self.candy_dispensed = False
-        self.candy_taken = False
-        if is_arduino:
+        self.is_arduino = is_arduino
+        if is_arduino: # condititional config to allow another arduino to act as host
             self.connected_led = digitalio.DigitalInOut(board.BLUE_LED)
             self.connected_led.direction = digitalio.Direction.OUTPUT
-            self.pixel_shutoff = time.monotonic()
+            self.timeout = time.monotonic()
             self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)  
-        
 
         # Create two buffer instances
         self.IncommingBuffer = CircBuffer(buffer_size)
         self.OutgoingBuffer = CircBuffer(buffer_size)
-        self.comm_mode = comm_mode
+
         # Create watchdog management variables
         self.watchdog_timeout = 64
         self.watchdog_timer = 0
-        # Create flag management dict and total flag count
+
+        # Create flag management system
         self.is_connected = False 
         self.flag_count = 0
         self.host_flags = {
@@ -329,6 +332,15 @@ class HostComms:
             "@mc": 0, # Candy dispensed flag
             "@rs": 0, # Maintain Conneciton flag
             "@iD": 0, # Candy Dispense flag
+        }
+
+        # Create booleans to be accessed outside candycom by other programs
+        self.candy_dispensed = False
+        self.candy_taken = False
+
+        self.candy_stats = {
+            "candy_disepnsed"   :   0,
+            "candy_taken"       :   0,
         }
         
     # Create methods for interacting with buffers
@@ -368,7 +380,6 @@ class HostComms:
         else:
             return
             
-
     # Create async methods for transmitting data
     async def receive_message(self):
         if self.comm_mode == 'serial':
@@ -424,9 +435,13 @@ class HostComms:
                 incoming_comm_handler(),
                 outgoing_comm_handler()
             )
-        
-            if time.monotonic() > self.pixel_shutoff:
-                self.pixels[0] = (0, 0, 0)
+            if time.monotonic() > self.timeout:
+                if self.is_arduino:
+                    self.pixels[0] = (0, 0, 0)
+                self.candy_dispensed = False
+            if self.check_data_incoming():
+                await self.message_interpreter()
+
 
     # Create Async Method to handle the connection
     async def establish_connection(self):
@@ -455,33 +470,28 @@ class HostComms:
             await asyncio.sleep(1)
         print("Connection Established")     
         self.run_comm_handler = asyncio.create_task(self.comm_handler())
-        self.run_event_handler = asyncio.create_task(self.event_handler())
         if self.comm_mode == "serial":
             self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
         self.OutgoingBuffer.flush()
                     
-    # Create Command methods
+    # Create method to dispense candy
     def dispense_candy(self):
         global is_arduino
         if is_arduino:
-            self.pixel_shutoff = time.monotonic() + 0.5
+            self.timeout = time.monotonic() + 0.5
             self.pixels[0] = (10, 0, 0)
         self.enqueue_message(comm_dict["dispense_candy"])
 
-    async def event_handler(self):
-        print("running event_handler")
-        while self.is_connected:
-            if self.IncommingBuffer.peek() == ack_dict["~ID"]:
-                self.dequeue_message()
-                self.candy_dispensed = True
-                await asyncio.sleep(1)
-                self.candy_dispensed = False
-
-            elif self.IncommingBuffer.peek() == comm_dict["candy_taken"]:
-                self.dequeue_message()
-                self.enqueue_message(ack_dict["%IR"])
-                self.candy_taken = True
-                await asyncio.sleep(1)
-                self.candy_taken = False
-            else:
-                await asyncio.sleep(0.5)
+    # Create method to recognize dispense operation
+    async def dispense_recognized(self):
+        # set bool for succecssful dispense to true
+        self.candy_dispensed = True
+        self.candy_stats["candy_dispensed"] += 1
+    
+    async def message_interpreter(self):
+        message_interpertations = {
+            "%MC"  :    self.dispense_recognized,
+        }
+        message = self.dequeue_message()
+        if message in message_interpertations:
+            await message_interpertations[message]()
