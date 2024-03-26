@@ -1,7 +1,7 @@
 # BLE attempt at creating ble integration for candycom
 # By Charles Palmer and Michael Lance
 # 3/14/2024
-# Updated 3/16/2024
+# Updated 3/26/2024
 #-----------------------------------------------------------------------------------------------------------------------------------------------------------------#
 # Import all libraries needed to interact with bluetooth low energy
 
@@ -29,9 +29,16 @@ class BleClient():
     
         #self.connected_led.value = False
 
+    def connect(self):
+        if self.ble.advertising:
+            self.ble.stop_advertising()
         self.ble.start_advertising(self.advertisement)
-        while not self.ble.connected:    
+        while not self.ble.connected: # Wait for host to connect
             pass
+
+    def disconnect(self):
+        if self.ble.connected:
+            self.ble.disconnect()
 
     def write(self, data):
         data = data.encode('utf-8') 
@@ -49,6 +56,7 @@ class BleHost():
         self.uart_connection = None
         self.uart_service = None
 
+    def connect(self):
         if not self.uart_connection:
             for adv in self.ble.start_scan(ProvideServicesAdvertisement):
                 if UARTService in adv.services:
@@ -57,6 +65,10 @@ class BleHost():
         self.ble.stop_scan()
         if self.uart_connection and self.uart_connection.connected:
             self.uart_service = self.uart_connection[UARTService]
+
+    def disconnect(self):
+        if self.ble.connected:
+            self.ble.disconnect()
 
     def write(self, data):
         data = data.encode('utf-8') 

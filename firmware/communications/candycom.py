@@ -1,7 +1,7 @@
 # Asyncio based rewrite of candycom
 # Written by Michael Lance & Thomas Baker
 # 3/5/2024
-# Updated: 3/23/2024
+# Updated: 3/26/2024
 #------------------------------------------------------------------------#
 
 # import different libraries depending upon platform
@@ -120,7 +120,7 @@ class ClientComms:
         self.comm_mode = comm_mode
     
         # Create watchdog management variables
-        self.watchdog_timeout = 64 # Roughly every half-second
+        self.watchdog_timeout = 16 # Roughly every second
         self.watchdog_timer = 0
         # Create flag management dict and total flag count
         self.is_connected = False 
@@ -191,32 +191,22 @@ class ClientComms:
 
     # Create async watchdog method to maintain the connection
     async def connection_watchdog(self):
-        print("running watchdog")
         while self.is_connected:
-            if self.check_data_incoming():
-                await self.receive_message()
-                if self.IncommingBuffer.peek() == comm_dict["maintain_connection"]:
-                    message = self.dequeue_message()
-                    self.enqueue_message(ack_dict[message])
-                    self.watchdog_timer = 0
-                    print("resseting watchdog")
-
-                else:
-                    self.dequeue_message
-                    self.watchdog_timer += 1
-                    print("adding one to watchdog timer")
-            else:
+            if not self.check_data_incoming():
                 self.watchdog_timer += 1
-                print("adding one to watchdog timer")
-        
+                print(f"watchdog {self.watchdog_timer}/{self.watchdog_timeout}")
+            
             if self.watchdog_timer == self.watchdog_timeout:
-                print("Conneciton Terminated by Watchdog Timeout")
                 self.is_connected = False
-                self.run_comm_handler.cancel()
-                self.run_connection_watchdog.cancel()
+                self.run_comm_handler.cancel
+                if self.comm_mode == 'ble':
+                    self.ble_ser.disconnect()
                 await self.establish_connection()
             await asyncio.sleep(1)
-            print("watchdog operation complete")
+
+    async def reset_watchdog(self):
+        self.watchdog_timer = 0
+        self.enqueue_message(ack_dict[comm_dict["maintain_connection"]])
 
     # Create async method used to handle communications
     async def comm_handler(self):
@@ -245,6 +235,7 @@ class ClientComms:
             if self.check_data_incoming():
                 await self.mesage_interpreter()
 
+        print("comm_handler exited")
     
     async def watch_for_taken(self):
         print("watching for candy taken")
@@ -260,6 +251,7 @@ class ClientComms:
         elif self.comm_mode == "ble":
             print("BLE enabled: waiting for host...")
             self.ble_ser = candyble.BleClient()
+            self.ble_ser.connect()
             
         print("Waiting for connection to be established")
         self.connected_led.value = False
@@ -278,9 +270,8 @@ class ClientComms:
             await asyncio.sleep(0.5)
         # Run comm_handler and connection_watchdog as background tasks
         self.run_comm_handler = asyncio.create_task(self.comm_handler())
-        if self.comm_mode == "serial":
-            self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
-
+        self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
+   
     async def dispense_candy(self):
         self.timeout = time.monotonic() +0.5
         self.pixels[0] = (0, 10, 0)
@@ -290,13 +281,14 @@ class ClientComms:
         
     async def mesage_interpreter(self):
         message_interpertations = {
-            "~ID"   :    self.dispense_candy
+            "~ID"   :    self.dispense_candy,
+            "~RS"   :   self.reset_watchdog,
+
         }
         
         message = self.dequeue_message()
         if message in message_interpertations:
             await message_interpertations[message]()
-
 
 #------------------------------------------------------------------------#
 # Create Class for the Host side of the protocal
@@ -320,7 +312,7 @@ class HostComms:
         self.OutgoingBuffer = CircBuffer(buffer_size)
 
         # Create watchdog management variables
-        self.watchdog_timeout = 64
+        self.watchdog_timeout = 16
         self.watchdog_timer = 0
 
         # Create flag management system
@@ -398,24 +390,23 @@ class HostComms:
             self.ble_ser.write(message)
 
     async def connection_watchdog(self):
-        print("running watchdog")
         while self.is_connected:
-            if self.check_data_incoming():
-                self.dequeue_message()
-                print("resetting watchdog")
-                self.watchdog_timer = 0
-            else:
+            if not self.check_data_incoming():
                 self.watchdog_timer += 1
-                print("adding one to watchdog timer")
+                print(f"watchdog {self.watchdog_timer}/{self.watchdog_timeout}")
                 self.enqueue_message(comm_dict["maintain_connection"])
-                await self.transmit_message()
+            
             if self.watchdog_timer == self.watchdog_timeout:
-                print("Conneciton Terminated by Watchdog Timeout")
-                self.is_connected = False
-                self.run_comm_handler.cancel()
-                self.run_connection_watchdog.cancel()
-                await self.establish_connection()
+                self.is_connected == False
+                if self.comm_mode == 'ble':
+                    self.ble_ser.disconnect()
+                
+                await self.establish_connection() 
+
             await asyncio.sleep(1)
+
+    async def reset_watchdog(self):
+        self.watchdog_timer = 0
 
     async def comm_handler(self):
         print("running comm_handler")
@@ -441,7 +432,7 @@ class HostComms:
                 self.candy_dispensed = False
             if self.check_data_incoming():
                 await self.message_interpreter()
-
+        print("comm_handler exited")
 
     # Create Async Method to handle the connection
     async def establish_connection(self):
@@ -451,6 +442,7 @@ class HostComms:
         elif self.comm_mode == "ble":
             print("BLE enabled... Searching for client...")
             self.ble_ser = candyble.BleHost()
+            self.ble_ser.connect()
         print("attempting to establish connection")
         if is_arduino:
             self.connected_led.value = False
@@ -470,8 +462,7 @@ class HostComms:
             await asyncio.sleep(1)
         print("Connection Established")     
         self.run_comm_handler = asyncio.create_task(self.comm_handler())
-        if self.comm_mode == "serial":
-            self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
+        self.run_connection_watchdog = asyncio.create_task(self.connection_watchdog())
         self.OutgoingBuffer.flush()
                     
     # Create method to dispense candy
@@ -490,7 +481,8 @@ class HostComms:
     
     async def message_interpreter(self):
         message_interpertations = {
-            "%MC"  :    self.dispense_recognized,
+            "%MC"   :   self.dispense_recognized,
+            "@rs"   :   self.reset_watchdog,
         }
         message = self.dequeue_message()
         if message in message_interpertations:
