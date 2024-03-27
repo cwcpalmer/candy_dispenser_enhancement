@@ -198,11 +198,10 @@ class ClientComms:
             
             if self.watchdog_timer == self.watchdog_timeout:
                 self.is_connected = False
-                self.run_comm_handler.cancel
                 if self.comm_mode == 'ble':
                     self.ble_ser.disconnect()
-                await self.establish_connection()
             await asyncio.sleep(1)
+        print("watchdog exited successfully")
 
     async def reset_watchdog(self):
         self.watchdog_timer = 0
@@ -400,10 +399,9 @@ class HostComms:
                 self.is_connected == False
                 if self.comm_mode == 'ble':
                     self.ble_ser.disconnect()
-                
-                await self.establish_connection() 
-
             await asyncio.sleep(1)
+        print("watchdog exited successfully")
+
 
     async def reset_watchdog(self):
         self.watchdog_timer = 0
@@ -426,10 +424,11 @@ class HostComms:
                 incoming_comm_handler(),
                 outgoing_comm_handler()
             )
-            if time.monotonic() > self.timeout:
-                if self.is_arduino:
-                    self.pixels[0] = (0, 0, 0)
-                self.candy_dispensed = False
+            #if time.monotonic() > self.timeout:
+            #    if self.is_arduino:
+            #        self.pixels[0] = (0, 0, 0)
+            #    self.candy_dispensed = False
+            
             if self.check_data_incoming():
                 await self.message_interpreter()
         print("comm_handler exited")
@@ -459,6 +458,7 @@ class HostComms:
                     self.is_connected = True 
                     if is_arduino:
                         self.connected_led.value = True
+                    pass
             await asyncio.sleep(1)
         print("Connection Established")     
         self.run_comm_handler = asyncio.create_task(self.comm_handler())

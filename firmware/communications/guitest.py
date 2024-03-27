@@ -2,92 +2,86 @@ import tkinter as tk
 import time
 import candycom
 import asyncio
+from enum import Enum, auto
 
-last_time = time.time()
+class ConnectionStates(Enum):
+    DISCONNECTED = auto()
+    CONNECTING = auto()
+    CONNECTED = auto()
+    DISCONNECTING = auto()
+    
+class MainGui():
+    def __init__(self, loop):
+        self.loop = loop
+        self.keep_alive = True
+        self.main_window = tk.Tk()
+        self.main_window.title("Candy Machine Testing Application")
+        self.main_window.geometry("800x600")
+        self.ble_connection_state = ConnectionStates.DISCONNECTED
+        self.usb_connection_state = ConnectionStates.DISCONNECTED
+        self.status = tk.StringVar()
+        self.status.set("")
+        
+        connection_container = tk.Frame(master=self.main_window)
+        connection_container.pack(padx=10, pady=10)
 
-log_entries = []
+        self.connect_ble_btn = tk.Button(master=connection_container, text="Connect ble", command=lambda: self.loop.create_task(self.connect_ble()))
+        self.connect_ble_btn.pack(side=tk.LEFT, padx=10, pady=10)
+        self.disconnect_ble_btn = tk.Button(master=connection_container, text="Disconnect ble", command=lambda: self.loop.create_task(self.disconnect_ble()))
+        self.disconnect_ble_btn.pack(side=tk.LEFT, padx=10, pady=10)
+        
+        self.connect_usb_btn = tk.Button(master=connection_container, text="Connect USB", command=lambda: self.loop.create_task(self.connect_usb()))
+        self.connect_usb_btn.pack(side=tk.LEFT, padx=10, pady=10)
+        self.disconnect_usb_btn = tk.Button(master=connection_container, text="Disconnect USB", command=lambda: self.loop.create_task(self.disconnect_usb()))
+        self.disconnect_usb_btn.pack(side=tk.LEFT, padx=10, pady=10)
 
-candycomms = None
+        # connection status
+        status_container = tk.Frame(master=self.main_window)
+        status_container.pack(padx=10, pady=10)
+        self.status_lbl = tk.Label(master=status_container, textvariable=self.status)
+        self.status_lbl.pack(padx=10, pady=10)
 
-def connect_usb():
-    global candycomms
-    add_to_log("Connect USB")
-    candycomms = candycom.HostComms('serial')
-    asyncio.run(candycomms.establish_connection())
+    def set_interface_state(self):
+        if self.ble_connection_state is ConnectionStates.DISCONNECTED:
+            self.connect_ble_btn["state"] = "normal"
+            self.disconnect_ble_btn["state"] = "disabled"
+        elif self.ble_connection_state is ConnectionStates.CONNECTING or self.ble_connection_state is ConnectionStates.DISCONNECTING:
+            self.connect_usb_btn["state"] = "disabled"
+            self.connect_ble_btn["state"] = "disabled"
+            self.disconnect_ble_btn["state"] = "disabled"
+        else:
+            self.connect_ble_btn["state"] = "disabled"
+            self.disconnect_ble_btn["state"] = "normal"
+            
+        if self.usb_connection_state is ConnectionStates.DISCONNECTED:
+            self.connect_usb_btn["state"] = "normal"
+            self.disconnect_usb_btn["state"] = "disabled"
+        elif self.usb_connection_state is ConnectionStates.CONNECTING or self.usb_connection_state is ConnectionStates.DISCONNECTING:
+            self.connect_usb_btn["state"] = "disabled"
+            self.disconnect_usb_btn["state"] = "disabled"
+        else:
+            self.connect_usb_btn["state"] = "disabled"
+            self.disconnect_usb_btn["state"] = "normal"
+    
+    async def connect_ble(self):
+        self.ble_connection_state = ConnectionStates.CONNECTING
+        self.comms = candycom.HostComms('ble')
+        await self.comms.establish_connection()
+        
+    async def connect_usb(self):
+        await self.comms.dispense_candy()
+        print("connecting...")
+        
+    async def update(self):
+        while self.keep_alive:
+            self.main_window.update()
+            self.set_interface_state()
+            await asyncio.sleep(.1)
+            
+async def start_gui():
+    gui = MainGui(asyncio.get_event_loop())
+    await gui.update()
+    await aysncio.sleep(.2)
 
-def connect_ble():
-    global candycomms
-    add_to_log("Connect BLE")
-    candycomms = candycom.HostComms('ble')
-    asyncio.run(candycomms.establish_connection())
-
-def dispense_candy():
-    add_to_log("Request Dispense Candy")
-    candycomms.enqueue_message("~ID")
-    asyncio.run(candycomms.transmit_message())
-    poll_messages()
-
-def get_battery_level():
-	add_to_log("Getting Battery Level")
-
-
-def add_to_log(message):
-	 global last_time, log_entries
-	 cur_timestamp = time.time() 
-	 gap_timestamp = cur_timestamp - last_time
-	 text_log.insert( tk.END, f'{gap_timestamp:.3f}' + ": " + message + "\n")
-	 log_entries.append(f'{gap_timestamp:.3f}' + ": " + message + "\n")
-	 last_time = cur_timestamp
-
-def save_log():
-	print("Save log")
-	with open("output_log.log", "w") as writer:
-		for log_line in log_entries:
-			writer.write(log_line)
-	return
-
-def poll_messages():
-    asyncio.run(candycomms.receive_message())
-    message = candycomms.dequeue_message()
-    if message != None:
-        if message == "@iD":
-            add_to_log('Candy Dispensed')
-    # Schedule poll_messages to be called again after 100 milliseconds
-    main_window.after(100, poll_messages)
-
-
-main_window = tk.Tk()
-main_window.title("Candycomms communications tester 3000 rev 1.0.019, a Charles Palmer Product")
-main_window.geometry("800x600")
-main_window.configure(bg="hot pink")
-
-# Connection container
-connection_container = tk.Frame(master = main_window)
-connection_container.pack(padx=10, pady=10)
-
-usb_connect_btn = tk.Button(master = connection_container, text = "Connect USB", command=connect_usb)
-usb_connect_btn.pack(side = tk.LEFT, padx = 10, pady = 10)
-ble_connect_btn = tk.Button(master= connection_container, text="Connect BLE", command=connect_ble)
-ble_connect_btn.pack(side = tk.LEFT, padx = 10, pady = 10)
-
-# Actions container
-action_container = tk.Frame(master = main_window)
-action_container.pack(padx = 10, pady = 10)
-
-dispense_candy_btn = tk.Button(master = action_container, text = "Dispense Candy", command=dispense_candy)
-dispense_candy_btn.pack(side = tk.LEFT, padx = 10, pady = 10)
-get_battery_level_btn = tk.Button(master = action_container, text = "Get Battery Level", command=get_battery_level)
-get_battery_level_btn.pack(side = tk.LEFT, padx = 10, pady = 10)
-
-# Log report
-log_container = tk.Frame(master = main_window)
-log_container.configure(bg="green")
-log_container.pack(padx = 10, pady = 10)
-text_log = tk.Text(master = log_container, width=100, height=24)
-text_log.pack(padx = 10, pady = 10)
-save_log_btn = tk.Button(master = log_container, text = "Save Log", command=save_log)
-save_log_btn.pack(side = tk.RIGHT, padx = 10, pady = 10)
-
-
-
-main_window.mainloop()
+if __name__ == '__main__':
+    asyncio.run(start_gui())
